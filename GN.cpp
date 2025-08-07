@@ -87,7 +87,12 @@ void OptimizePointGN(Eigen::Vector3d& point3d,
             H += J.transpose() * J;
             b += -J.transpose() * e;
         }
-        // 求解线性方程 H * dx = b，得到更新量
+        /***************************
+        求解线性方程 H * dx = b，得到更新量
+        Cholesky 分解求解 Δx
+        llt()：对称正定矩阵的 Cholesky 分解（下三角）
+        ldlt()：对称矩阵的 LDLᵗ 分解（可用于半正定）
+         ***************************/
         Eigen::Vector3d dx = H.ldlt().solve(b);
 
         // 判断是否收敛

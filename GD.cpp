@@ -22,6 +22,13 @@ Eigen::Vector2d project(const Camera& cam, const Eigen::Vector3d& point) {
     return p_img.hnormalized();  // 齐次归一化
 }
 
+/****************************
+ 梯度计算公式：
+f(X) = sum_{i=1}^N || u_i_obs - pi(R_i * X + t_i) ||^2
+∇_X f(X) = ∂f(X) / ∂X = Σ_{i=1}^N [ -2 * J_i^T * (u_i_obs - π(R_i * X + t_i)) ]
+J_i = ∂π(R_i * X + t_i) / ∂X ∈ R^{2×3}
+ ****************************/
+
 // 计算残差对三维点的梯度（Jacobian）
 Eigen::Vector3d ComputeGradient(const Camera& cam,
                                 const Eigen::Vector3d& point3D,
@@ -38,12 +45,12 @@ Eigen::Vector3d ComputeGradient(const Camera& cam,
     Eigen::Vector2d e(observed_uv(0) - u,
                       observed_uv(1) - v);
 
-    // 投影函数对相机坐标的偏导数
+    // 链式法则，残差对三维点的梯度 = de/dPc * dPc/dX
+    // de/dPc(不包含相机畸变)
     Eigen::Matrix<double, 2, 3> de_dPc;
     de_dPc << -cam.K(0,0) / z, 0, cam.K(0,0) * x / (z*z),
             0, -cam.K(1,1) / z, cam.K(1,1) * y / (z*z);
 
-    // 链式法则，残差对三维点的梯度 = de/dPc * dPc/dX
     // dPc/dX = R
     Eigen::Vector3d grad = de_dPc.transpose() * e;  // 先计算de/dPc的转置乘e
     grad = cam.R.transpose() * grad;                // 乘以R转置
@@ -76,7 +83,6 @@ void OptimizePointGD(Eigen::Vector3d& point3D,
 
         std::cout << "Iter " << iter << ", total error = " << total_error
                   << ", grad norm = " << grad_sum.norm() << "\n";
-
         if (grad_sum.norm() < epsilon) {
             std::cout << "Converged at iteration " << iter << std::endl;
             break;
