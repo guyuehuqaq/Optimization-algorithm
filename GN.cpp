@@ -1,6 +1,11 @@
 #include <Eigen/Dense>
 #include <vector>
 #include <iostream>
+#include <random>
+#include <cmath>
+#include <opencv2/opencv.hpp>
+
+using namespace std;
 
 namespace Eigen{
     typedef Eigen::Matrix<double, 3, 4> Matrix3x4d;
@@ -107,6 +112,94 @@ void OptimizePointGN(Eigen::Vector3d& point3d,
     }
 }
 
+/*************
+   生成曲线数据, 设曲线为 y = exp(a*x*x + b*x + c)
+ *************/
+void GenerateCurveData(std::vector<double>& paras,
+                       double& w_sigma,
+                       int& data_num,
+                       std::vector<double>& x_data,
+                       std::vector<double>& y_data){
+  cv::RNG rng;
+
+  std::cout << paras[0] << paras[1] << paras[2] << std::endl;
+
+  for (int i = 0; i < data_num; i++){
+    double x = i / 100.0;
+    x_data.push_back(x);
+    double y = exp(paras[0]*x*x + paras[1]*x + paras[2]) + rng.gaussian(w_sigma * w_sigma);
+    y_data.push_back(y);
+  }
+}
+
+/*************
+   高斯牛顿优化拟合曲线
+ *************/
+void OptimizeCurveUsingGN(){
+  std::vector<double> paras = {1.0, 2.0, 1.0};   // 曲线真实参数
+  double ae = 2.0, be = -1.0, ce = 5.0;          // 曲线初始估计参数
+  int data_num = 100;                            // 数据量
+  double w_sigma = 1.0;                          // 高斯误差
+  double inv_sigma = 1.0 / w_sigma;
+
+  std::vector<double> x_data, y_data;
+  GenerateCurveData(paras, w_sigma, data_num, x_data, y_data);
+
+//  double ar = 1.0, br = 2.0, cr = 1.0;         // 真实参数值
+//  cv::RNG rng;                                 // OpenCV随机数产生器
+//  vector<double> x_data, y_data;      // 数据
+//  for (int i = 0; i < data_num; i++) {
+//    double x = i / 100.0;
+//    x_data.push_back(x);
+//    y_data.push_back(exp(ar * x * x + br * x + cr) + rng.gaussian(w_sigma * w_sigma));
+//  }
+
+  double cost = 0, lastCost = 0;
+
+  // 高斯牛顿优化
+  int max_iterations = 100;                // 迭代次数
+  for (int iter = 0; iter < max_iterations; iter++){
+    Eigen::Matrix3d H = Eigen::Matrix3d::Zero();  // 近似Hessian矩阵
+    Eigen::Vector3d b = Eigen::Vector3d::Zero();  // 梯度项
+
+    cost = 0;
+    for (int i = 0; i < data_num; ++i){
+      double xi = x_data[i], yi = y_data[i];
+      double error = yi - exp(ae*xi*xi + be*xi + ce);
+      Eigen::Vector3d  J;  // 雅可比矩阵
+      J[0] = -xi*xi*exp(ae*xi*xi + be*xi + ce);   // d_error/d_a
+      J[1] = -xi*exp(ae*xi*xi + be*xi + ce);      // d_error/d_b
+      J[2] = -exp(ae * xi * xi + be * xi + ce);   // d_error/dc
+      H +=  inv_sigma * inv_sigma * J * J.transpose();    // inv_sigma * inv_sigma * J.transpose() * J;
+      b += -inv_sigma * inv_sigma * error * J;
+      cost += error * error;
+    }
+    // 求解H * d_x = b, 更新x_k+1
+    Eigen::Vector3d d_x  = H.ldlt().solve(b);
+    if (isnan(d_x[0])) {
+      std::cout << "result is nan!" << std::endl;
+      break;
+    }
+
+    if (iter > 0 && cost >= lastCost) {
+      std::cout << "cost: " << cost << ">= last cost: " << lastCost << ", break." << std::endl;
+      break;
+    }
+    ae += d_x[0];
+    be += d_x[1];
+    ce += d_x[2];
+    lastCost = cost;
+    std::cout << "total cost: " << cost << ", \t\tupdate: " << d_x.transpose() <<
+         "\t\testimated params: " << ae << "," << be << "," << ce << std::endl;
+  }
+
+  std::cout << "estimated abc = " << ae << ", " << be << ", " << ce << std::endl;
+}
+
+
 int main(int argc, char **argv){
 
+  OptimizeCurveUsingGN();
+
+  return 0;
 }

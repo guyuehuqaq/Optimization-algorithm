@@ -67,21 +67,76 @@ J_i = ∂r_i/∂x 是第 i 个残差对参数的雅可比（行向量）
 
 ### 伪代码流程
 ```
-输入：初始参数 x0，初始阻尼 λ0，调整因子 ν > 1
-设置 x = x0，λ = λ0
-while not converged:
-    计算残差向量 r 和雅可比矩阵 J
-    计算 A = J^T J + λ I，b = -J^T r
-    求解线性方程 A Δx = b
-    计算目标函数值 F(x) 和尝试更新后 F(x + Δx)
+Input: 初始参数向量 x₀
+       最大迭代次数 max_iter
+       初始阻尼因子 λ₀
+       阻尼更新因子 ν (一般取 2)
+       收敛阈值 ε1 (梯度小), ε2 (步长小), ε3 (代价下降小)
 
-    if F(x + Δx) < F(x):
-        x ← x + Δx
-        λ ← λ / ν  # 降低阻尼，更信任高斯牛顿步长
-    else:
-        λ ← λ * ν  # 增大阻尼，更信任梯度方向
-        
-    检查收敛条件
-输出 最优参数 x
+Output: 最优解 x*, 迭代过程信息
+
+----------------------------------------------------
+# 初始化
+x ← x₀
+λ ← λ₀
+iter ← 0
+
+计算 f(x)               # 残差向量 (m×1)
+F(x) ← 0.5 * ||f(x)||²  # 目标函数
+J(x) ← Jacobian(f, x)   # 雅可比矩阵 (m×n)
+
+----------------------------------------------------
+# 迭代循环
+while iter < max_iter:
+    iter ← iter + 1
+
+    # 1. 计算 Hessian 近似和梯度
+    g ← J(x)^T f(x)          # 梯度 (n×1)
+    H ← J(x)^T J(x)          # Gauss-Newton 近似 Hessian (n×n)
+
+    # 2. 检查收敛条件 (梯度是否很小)
+    if ||g||_∞ ≤ ε1:
+        break
+
+    # 3. 解修正方程 (H + λI) Δx = -g
+    Δx ← Solve( H + λI , -g )
+
+    # 4. 检查步长是否很小
+    if ||Δx|| ≤ ε2 * (||x|| + ε2):
+        break
+
+    # 5. 计算新的候选点
+    x_new ← x + Δx
+    f_new ← f(x_new)
+    F_new ← 0.5 * ||f_new||²
+
+    # 6. 计算下降比率 ρ
+    # 预测下降值 ≈ 0.5 * Δx^T (λΔx - g)    0.5？？？
+    predicted_reduction ← 0.5 * Δx^T (λΔx - g)
+    actual_reduction ← F(x) - F_new
+    ρ ← actual_reduction / predicted_reduction
+
+    # 7. 根据 ρ 调整阻尼因子 λ
+    if ρ > 0:   # 成功下降
+        x ← x_new
+        f(x) ← f_new
+        F(x) ← F_new
+        J(x) ← Jacobian(f, x)
+
+        # 收缩 λ
+        λ ← λ * max(1/3, 1 - (2ρ - 1)^3)
+        ν ← 2
+    else:       # 下降失败
+        λ ← λ * ν
+        ν ← 2 * ν
+
+    # 8. 检查代价函数变化是否过小
+    if actual_reduction < ε3:
+        break
+
+end while
+
+return x
+
 ```
 

@@ -1,129 +1,121 @@
-#include <iostream>
 #include <Eigen/Dense>
 #include <vector>
-#include <functional>
+#include <iostream>
+#include <random>
+#include <cmath>
+#include <opencv2/opencv.hpp>
 
-using namespace Eigen;
 
-// LM算法核心实现
-// 参数说明：
-//  - x_init: 初始参数向量
-//  - residualFunc: 计算残差向量的函数，输入参数x，输出残差向量r
-//  - jacobianFunc: 计算雅可比矩阵的函数，输入参数x，输出雅可比矩阵J
-//  - maxIterations: 最大迭代次数
-//  - tol: 收敛阈值
-VectorXd LevenbergMarquardt(
-        const VectorXd& x_init,
-        std::function<VectorXd(const VectorXd&)> residualFunc,
-        std::function<MatrixXd(const VectorXd&)> jacobianFunc,
-        int maxIterations = 100,
-        double tol = 1e-6)
-{
-    VectorXd x = x_init;
-    double lambda = 1e-3;         // 初始阻尼参数
-    double v = 2.0;               // 阻尼调整因子
 
-    VectorXd r = residualFunc(x);
-    double prevCost = r.squaredNorm();
+/*************
+   生成曲线数据, 设曲线为 y = exp(a*x*x + b*x + c)
+ *************/
+#include <iostream>
+#include <vector>
+#include <opencv2/core.hpp>
+#include <Eigen/Dense>
+#include <algorithm>
+#include <cmath>
 
-    for (int iter = 0; iter < maxIterations; ++iter)
-    {
-        MatrixXd J = jacobianFunc(x);
-        MatrixXd A = J.transpose() * J;
-        VectorXd g = J.transpose() * r;
+void GenerateCurveData(const std::vector<double>& paras,
+                       double w_sigma,
+                       int data_num,
+                       std::vector<double>& x_data,
+                       std::vector<double>& y_data){
+  cv::RNG rng;
 
-        // 判断梯度范数是否足够小，提前收敛
-        if (g.norm() < tol)
-        {
-            std::cout << "Gradient norm below tolerance, stop at iteration " << iter << std::endl;
-            break;
-        }
+  for (int i = 0; i < data_num; i++){
+    double x = i / 100.0;
+    x_data.push_back(x);
+    double y = std::exp(paras[0]*x*x + paras[1]*x + paras[2]) + rng.gaussian(w_sigma * w_sigma);
+    y_data.push_back(y);
+  }
+}
 
-        bool foundBetter = false;
-        VectorXd delta_x;
+void OptimizeCurveUsingLM() {
+  std::vector<double> paras = {1.0, 2.0, 1.0};   // 曲线真实参数
+  double ae = 2.0, be = -1.0, ce = 5;          // 初始估计
+  int data_num = 100;
+  double w_sigma = 1.0;
 
-        while (!foundBetter)
-        {
-            // 构造带阻尼的线性方程组 (A + lambda * I) delta_x = -g
-            MatrixXd A_lm = A + lambda * MatrixXd::Identity(x.size(), x.size());
+  std::vector<double> x_data, y_data;
+  GenerateCurveData(paras, w_sigma, data_num, x_data, y_data);
 
-            // 求解增量
-            delta_x = A_lm.ldlt().solve(-g);
+  double cost = 0;
+  int max_iterations = 100;
+  double lambda = 1.0;   // 阻尼因子
+  double ni = 2.0;
 
-            if (delta_x.norm() < tol)
-            {
-                std::cout << "Step size below tolerance, stop at iteration " << iter << std::endl;
-                return x;
-            }
+  for (int iter = 0; iter < max_iterations; ++iter){
+    Eigen::Matrix3d H = Eigen::Matrix3d::Zero();
+    Eigen::Vector3d b = Eigen::Vector3d::Zero();
+    cost = 0;
 
-            VectorXd x_new = x + delta_x;
-            VectorXd r_new = residualFunc(x_new);
-            double newCost = r_new.squaredNorm();
+    for (int i = 0; i < data_num; ++i){
+      double xi = x_data[i], yi = y_data[i];
+      if (yi <= 0) yi = 1e-6; // 避免 log(0)
+      double error = std::log(yi) - (ae*xi*xi + be*xi + ce);
+      Eigen::Vector3d J;
+      J[0] = -xi*xi; // d_error/d_a
+      J[1] = -xi;    // d_error/d_b
+      J[2] = -1;     // d_error/d_c
 
-            if (newCost < prevCost)
-            {
-                // 接受更新
-                x = x_new;
-                r = r_new;
-                prevCost = newCost;
-
-                // 减小阻尼参数
-                lambda /= v;
-                foundBetter = true;
-            }
-            else
-            {
-                // 拒绝更新，增大阻尼参数
-                lambda *= v;
-
-                // 阻尼过大则停止
-                if (lambda > 1e12)
-                {
-                    std::cout << "Lambda too large, stop at iteration " << iter << std::endl;
-                    return x;
-                }
-            }
-        }
-
-        std::cout << "Iteration " << iter << ", cost = " << prevCost << std::endl;
-
-        if (prevCost < tol)
-        {
-            std::cout << "Cost below tolerance, optimization finished." << std::endl;
-            break;
-        }
+      H += J * J.transpose();
+      b += -error * J;
+      cost += error * error;
     }
 
-    return x;
+    Eigen::Matrix3d H_lm = H + lambda * Eigen::Matrix3d::Identity();
+    Eigen::Vector3d d_x = H_lm.ldlt().solve(b);
+
+    if (!d_x.allFinite()) {
+      std::cout << "d_x contains NaN/Inf, increasing lambda..." << std::endl;
+      lambda *= ni;
+      ni *= 2.0;
+      continue;
+    }
+
+    double new_ae = ae + d_x[0];
+    double new_be = be + d_x[1];
+    double new_ce = ce + d_x[2];
+
+    // 新 cost
+    double new_cost = 0.0;
+    for (int i = 0; i < data_num; ++i){
+      double xi = x_data[i], yi = y_data[i];
+      if (yi <= 0) yi = 1e-6;
+      double error = std::log(yi) - (new_ae*xi*xi + new_be*xi + new_ce);
+      new_cost += error * error;
+    }
+
+    double F_actual = cost - new_cost;
+    double F_predict = -(b.transpose()*d_x + 0.5* d_x.transpose()* H *d_x).value();
+    double rho = F_actual / F_predict;
+
+    if (rho > 0){
+      ae = new_ae;
+      be = new_be;
+      ce = new_ce;
+      cost = new_cost;
+      lambda *= std::max(1.0/3.0, 1.0 - pow(2*rho - 1, 3));
+      ni = 2.0;
+    }else{
+      lambda *= ni;
+      ni *= 2.0;
+    }
+
+    std::cout << "Iter " << iter << ", cost: " << cost << ", a,b,c: "
+              << ae << ", " << be << ", " << ce << std::endl;
+
+    if (d_x.norm() < 1e-6) break; // 收敛判断
+  }
+
+  std::cout << "===========" << std::endl;
+  std::cout << "Final cost: " << cost << std::endl;
+  std::cout << "Estimated a,b,c: " << ae << ", " << be << ", " << ce << std::endl;
 }
 
-// ---------- 示例使用 ----------
-// 目标：拟合 y = x^2
-// 残差函数 r(x) = x^2 - y_obs
-
-VectorXd residualExample(const VectorXd& x)
-{
-    // 假设观测值 y_obs = 4，想找到 x 使 x^2 ≈ 4
-    VectorXd r(1);
-    r(0) = x(0) * x(0) - 4.0;
-    return r;
-}
-
-MatrixXd jacobianExample(const VectorXd& x)
-{
-    MatrixXd J(1, 1);
-    J(0, 0) = 2 * x(0);
-    return J;
-}
-
-int main()
-{
-    VectorXd x_init(1);
-    x_init(0) = 1.0; // 初始猜测
-
-    VectorXd x_opt = LevenbergMarquardt(x_init, residualExample, jacobianExample);
-
-    std::cout << "Optimized x: " << x_opt.transpose() << std::endl;
-
-    return 0;
+int main() {
+  OptimizeCurveUsingLM();
+  return 0;
 }
