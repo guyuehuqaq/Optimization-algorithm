@@ -1,6 +1,6 @@
 #include <iostream>
 #include <opencv2/opencv.hpp>
-#include "Ceres_solver.h"
+#include "curve_fit_ceres.h"
 
 // 生成数据
 void GenerateData(const std::vector<double>& paras,
